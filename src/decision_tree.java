@@ -5,18 +5,21 @@ import java.io.FileWriter;
 import java.io.IOException;
 import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.Map;
 
 import static java.lang.Math.max;
 
 // DO! Conversion from linear to categorical, and/or SKIPPING them
 public class decision_tree {
-    static int min_size = 75;
+    //HYPERPARAMETER: HOW MANY ELEMENTS DOES A NODE NEED TO HAVE IN ORDER TO SPLIT
+    static int min_size = 25;
 
     public static void main(String[] args) {
-        String train_input = "train.csv";
+        String train_input = "train_categorized.csv";
         String test_input = "test.csv";
-        int max_depth = 5;
+        //HYPERPARAMETER: HOW MANY LAYERS IS THE TREE ALLOWED TO GO
+        int max_depth = 10;
         String train_out = "train_out.csv";
         String test_out = "test_out.csv";
         String metrics_out = "metrics_out.csv";
@@ -74,60 +77,101 @@ public class decision_tree {
             }
 
         }
+        //for random forest: bootstrapping, average result of several trees for answer, and in each splitting of a node only a subset of features are considered
 
-        Node testingnode = new Node();
-        testingnode.nodeDataColumns = train_input_columns;
-        testingnode = splitNode(testingnode, max_depth, headers);
-        String treeOutput = printTree(testingnode, 0);
-        try (BufferedWriter writer = new BufferedWriter(new FileWriter(print_out))) {
-            writer.write(treeOutput);
-        } catch (IOException e) {
-            e.printStackTrace();
-        }
+        //HYPERPARAMETER: number of trees for random forest
+        int numTrees = 50;
+        Node[] forestArray = new Node[numTrees];
+        double[] forestArrayErrors = new double[numTrees];
 
-        // DO! Predictions! (and Error)
-        double[] train_predictions = new double[train_input_columns[0].length];
-        for (int i = 0; i < train_predictions.length; i++) {
-            String[] thing = train_input_array.get(i + 1);
-            train_predictions[i] = getNodeResult(thing, testingnode);
-        }
-        String train_prediction_s = "";
-        for (int i = 0; i < train_predictions.length; i++) {
-            train_prediction_s = train_prediction_s + train_predictions[i] + "\n";
-        }
+        for (int treeIndex = 0; treeIndex<numTrees; treeIndex++) {
+            Node testingnode = new Node();
+            forestArray[treeIndex] = testingnode;
+            String[][] train_input_columns_bootStrapped = new String[train_input_columns.length][train_input_columns[0].length];
+            for(int ticRowIndex =0; ticRowIndex< train_input_columns[0].length; ticRowIndex++){
+                int otherRowIndex=(int)(Math.random()*train_input_columns[0].length);
+                for(int ticColIndex = 0; ticColIndex<train_input_columns.length; ticColIndex++){
+                    train_input_columns_bootStrapped[ticColIndex][ticRowIndex] = train_input_columns[ticColIndex][otherRowIndex];
+                }
+            }
 
-        try (BufferedWriter writer = new BufferedWriter(new FileWriter(train_out))) {
-            writer.write(train_prediction_s);
-        } catch (IOException e) {
-            e.printStackTrace();
-        }
+
+            testingnode.nodeDataColumns = train_input_columns_bootStrapped;
+            testingnode = splitNode(testingnode, max_depth, headers);
+            String treeOutput = printTree(testingnode, 0);
+            try (BufferedWriter writer = new BufferedWriter(new FileWriter(print_out+""+treeIndex))) {
+                writer.write(treeOutput);
+            } catch (IOException e) {
+                e.printStackTrace();
+            }
+            ///////////////////////////////////////////////////////////////////////////////
+            double[] train_predictions = new double[train_input_columns_bootStrapped[0].length];
+            for (int i = 0; i < train_predictions.length; i++) {
+                String[] currentRowData = new String[train_input_columns_bootStrapped.length];
+                for (int j = 0; j < train_input_columns_bootStrapped.length; j++) {
+                    currentRowData[j] = train_input_columns_bootStrapped[j][i];
+                }
+                train_predictions[i] = getNodeResult(currentRowData, testingnode);
+            }
+            ///////////////////////////////////////////////////////////////////////////
+            String train_prediction_s = "";
+            for (int i = 0; i < train_predictions.length; i++) {
+                train_prediction_s = train_prediction_s + train_predictions[i] + "\n";
+            }
+
+            try (BufferedWriter writer = new BufferedWriter(new FileWriter(train_out+""+treeIndex))) {
+                writer.write(train_prediction_s);
+            } catch (IOException e) {
+                e.printStackTrace();
+            }
 ////
-        double[] test_predictions = new double[test_input_columns[0].length];
-        for (int i = 0; i < test_predictions.length; i++) {
-            String[] thing = test_input_array.get(i + 1);
-            test_predictions[i] = getNodeResult(thing, testingnode);
+            double[] test_predictions = new double[test_input_columns[0].length];
+            for (int i = 0; i < test_predictions.length; i++) {
+                String[] thing = test_input_array.get(i + 1);
+                test_predictions[i] = getNodeResult(thing, testingnode);
+            }
+            String test_prediction_s = "";
+            for (int i = 0; i < test_predictions.length; i++) {
+                test_prediction_s = test_prediction_s + test_predictions[i] + "\n";
+            }
+            try (BufferedWriter writer = new BufferedWriter(new FileWriter(test_out+""+treeIndex))) {
+                writer.write(test_prediction_s);
+            } catch (IOException e) {
+                e.printStackTrace();
+            }
+
+            double finalErrorResult = getFinalErrorResult(train_predictions, train_input_columns_bootStrapped[train_input_columns_bootStrapped.length - 1]);
+            double perCapitaError = Math.pow(finalErrorResult / train_input_columns_bootStrapped[0].length, .5);
+            String errorRatio = "error(train): " + finalErrorResult + "  That means error per house is: " + perCapitaError;
+            try (BufferedWriter writer = new BufferedWriter(new FileWriter(metrics_out+""+treeIndex))) {
+                writer.write(errorRatio);
+            } catch (IOException e) {
+                e.printStackTrace();
+            }
+
         }
-        String test_prediction_s = "";
-        for (int i = 0; i < test_predictions.length; i++) {
-            test_prediction_s = test_prediction_s + test_predictions[i] + "\n";
+        double[] forest_train_predictions = new double[train_input_columns[0].length];
+        for (int i = 0; i < forest_train_predictions.length; i++) {
+            String[] thing = train_input_array.get(i + 1);
+            forest_train_predictions[i] = getForestResult(thing, forestArray);
         }
-        try (BufferedWriter writer = new BufferedWriter(new FileWriter(test_out))) {
-            writer.write(test_prediction_s);
+        double forestErrorResult = getFinalErrorResult(forest_train_predictions, train_input_columns[train_input_columns.length - 1]);
+        double forest_perCapitaError = Math.pow(forestErrorResult / train_input_columns[0].length, .5);
+        String forest_errorRatio = "error(train): " + forestErrorResult + "  That means error per house is: " + forest_perCapitaError;
+        try (BufferedWriter writer = new BufferedWriter(new FileWriter("Forest.csv"))) {
+            writer.write(forest_errorRatio);
         } catch (IOException e) {
             e.printStackTrace();
         }
+    }
 
-        double finalErrorResult = getFinalErrorResult(train_predictions, train_input_columns[train_input_columns.length - 1]);
-        double perCapitaError = Math.pow(finalErrorResult/train_input_columns[0].length,.5);
-        String errorRatio = "error(train): " + finalErrorResult +"  That means error per house is: " + perCapitaError;
-        try (BufferedWriter writer = new BufferedWriter(new FileWriter(metrics_out))) {
-            writer.write(errorRatio);
-        } catch (IOException e) {
-            e.printStackTrace();
+    public static double getForestResult(String[] arr, Node[] nodes) {
+        double sum = 0;
+        for (int i = 0; i < nodes.length; i++) {
+            sum += getNodeResult(arr, nodes[i]);
         }
-
-//        System.out.println(testingnode.childNodes.length);
-
+        sum /= nodes.length;
+        return sum;
     }
 
     public static double getFinalErrorResult(double[] prediction, String[] truth) {
@@ -148,13 +192,13 @@ public class decision_tree {
             return node.mean;
         } else {
             int columnIndex = node.childNodes[0].indexFromLastNode;
-            for(int i=0; i<node.childNodes.length; i++){
-                if(arr[columnIndex].equals(node.childNodes[i].categorizationFromLastNode)){
+            for (int i = 0; i < node.childNodes.length; i++) {
+                if (arr[columnIndex].equals(node.childNodes[i].categorizationFromLastNode)) {
                     return getNodeResult(arr, node.childNodes[i]);
                 }
             }
         }
-        return -99999;
+        return node.mean;
     }
 
     // DO! printing, loop through array of child nodes and recurse onto them.
@@ -174,7 +218,7 @@ public class decision_tree {
                     str = str + "\n" + printTree(node.childNodes[j], indents + 1);
                 }
             }
-        }else{
+        } else {
             str = str + "!!!!!";
         }
         return str;
@@ -186,16 +230,37 @@ public class decision_tree {
     //part 2: splitting it
     //key is categorization, column index (for separation, similar to header) and personal children array index are different
     public static Node splitNode(Node n, int depthLeft, String[] headers) {
-        if ((n.nodeDataColumns[0].length < min_size) || (depthLeft == 0)) {
-            //System.out.println("hey");
-            n.childNodes = null;
+        //HYPERPARAMETER: HOW SMALL CAN A NODE'S SIZE BE UNTIL IT CAN NO LONGER BE TRUSTED. IF THE DATASET IS TOO SMALL, AVERAGE 1/3 MEAN AND 2/3 PARENT MEAN
+        if (n.nodeDataColumns[0].length > 5) {
             n.mean = getMean(n.nodeDataColumns[n.nodeDataColumns.length - 1]);
+        } else {
+            double tempMean = getMean(n.nodeDataColumns[n.nodeDataColumns.length - 1]);
+            n.mean = (n.parentNode.mean + n.parentNode.mean + tempMean) / 3;
+        }
+
+        if ((n.nodeDataColumns[0].length < min_size) || (depthLeft == 0)) {
+            //System.out.println("TESTING STRING");
+            n.childNodes = null;
             return n;
         }
 
+        //HYPERPARAMETER: instead of going through all the features each split, only looks at a random subset, size sqrt(total features)
+        int[] randomColumnArray = new int[(int) Math.round(Math.pow(n.nodeDataColumns.length - 2, .5))];
+        HashSet<Integer> tempRandomColumns = new HashSet<>();
+        for (int i = 0; i < randomColumnArray.length; i++) {
+            int tempInt = 1 + (int) (Math.random() * (n.nodeDataColumns.length - 2));
+            if (tempRandomColumns.contains(tempInt)) {
+                i--;
+            } else {
+                tempRandomColumns.add(tempInt);
+                randomColumnArray[i] = tempInt;
+            }
+
+        }
         int minSSEindex = -1;
         double minSSE = -1;
-        for (int columnIndexAttempt = 1; columnIndexAttempt < n.nodeDataColumns.length - 1; columnIndexAttempt++) {
+        for (int randomColumnIndex = 0; randomColumnIndex < randomColumnArray.length; randomColumnIndex++) {
+            int columnIndexAttempt = randomColumnArray[randomColumnIndex];
             HashMap<String, ArrayList<Double>> currentColumnMap = new HashMap<>();
             for (int row = 0; row < n.nodeDataColumns[columnIndexAttempt].length; row++) {
                 if (!currentColumnMap.containsKey(n.nodeDataColumns[columnIndexAttempt][row])) {
@@ -208,13 +273,16 @@ public class decision_tree {
             tempSSE = getSSE(currentColumnMap);
 
             if ((minSSE == -1) || (tempSSE < minSSE)) {
-                if(currentColumnMap.size()<7){
-                    minSSE = tempSSE;
-                    minSSEindex = columnIndexAttempt;
-                }
+                //POSSIBLE HYPERPARAMETER: ONLY SPLITS IF THERE AREN'T THAT MANY POSSIBLE VALUES FOR A FEATURE, UNUSED FOR NOW
+                //if(currentColumnMap.size()<6){
+                minSSE = tempSSE;
+                minSSEindex = columnIndexAttempt;
+                //}
             }
 
         }
+
+
         HashMap<String, ArrayList<Integer>> indexMap = new HashMap<>();
         for (int row = 0; row < n.nodeDataColumns[minSSEindex].length; row++) {
             if (!indexMap.containsKey(n.nodeDataColumns[minSSEindex][row])) {
@@ -229,6 +297,7 @@ public class decision_tree {
         int childNodeIndex = 0;
         for (Map.Entry<String, ArrayList<Integer>> entry : indexMap.entrySet()) {
             childrenNodes[childNodeIndex] = new Node();
+            childrenNodes[childNodeIndex].parentNode = n;
             childrenNodes[childNodeIndex].splitNum = childNodeIndex;
             childrenNodes[childNodeIndex].splitHeader = headers[minSSEindex];
             childrenNodes[childNodeIndex].indexFromLastNode = minSSEindex;
@@ -299,9 +368,10 @@ public class decision_tree {
 }
 
 class Node {
+    Node parentNode;
     String categorizationFromLastNode;//always done
     int indexFromLastNode;//always done
-    String[][] nodeDataColumns;//always done
+    String[][] nodeDataColumns;//always done. also, n.nodeDataColumns.length is numColumns
     Node[] childNodes;//null if no more
     double mean;//always done, or only for leaf nodes
     String splitHeader;
@@ -317,5 +387,6 @@ class Node {
         mean = -1;
         splitHeader = null;
         splitNum = -1;
+        parentNode = null;
     }
 }
